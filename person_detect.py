@@ -25,12 +25,12 @@ class Queue:
     
     def check_coords(self, coords):
         d={k+1:0 for k in range(len(self.queues))}
+        
         for coord in coords:
             for i, q in enumerate(self.queues):
                 if coord[0]>q[0] and coord[2]<q[2]:
                     d[i+1]+=1
         return d
-
 
 class PersonDetect:
     '''
@@ -44,8 +44,8 @@ class PersonDetect:
         self.threshold=threshold
 
         try:
-            # old version self.model=IENetwork(self.model_structure, self.model_weights)
-            self.model = core.read_network(self.model_structure, self.model_weights)
+            self.model=IENetwork(self.model_structure, self.model_weights)
+            #self.model = core.read_network(self.model_structure, self.model_weights)
         except Exception as e:
             raise ValueError("Could not Initialise the network. Have you enterred the correct model path?")
 
@@ -55,63 +55,70 @@ class PersonDetect:
         self.output_shape=self.model.outputs[self.output_name].shape
 
     def load_model(self):
-        
-        core = IECore()
-        self.exec_network = core.load_network(network=self.model, device_name=self.device, num_requests=1)
+      
+        self.core = IECore()
+        self.exec_network = self.core.load_network(network=self.model, device_name=self.device, num_requests=1)
         
     def predict(self, image, initial_w, initial_h):
         
         input_img = image
         # Pre-process the image
-        image = preprocess_input(image)
+        image = self.preprocess_input(image)
         
-        # Perform inference
-        result = async_inference(image)
+        # Perform async inference
+        infer_request_handle = self.async_inference(image)
+        
+        # Get output
+        res = self.get_output(infer_request_handle, 0, output=None)
         
         # Draw Bounding Box
-        image, coords = draw_outputs(results, image, initial_w, initial_h)
+        image, coords, current_count = self.boundingbox(res, initial_w, initial_h, input_img)
 
-        return coords, image
+        return coords, image, current_count
+    
+    def preprocess_input(self, frame):
+        # Get the input shape
+        n, c, h, w = (self.core, self.input_shape)[1]
+        #print("n-c-h-w " + str(n) + "-" + str(c) + "-" + str(h) + "-" + str(w))
+        image = cv2.resize(frame, (w, h))
+        image = image.transpose((2, 0, 1))
+        image = image.reshape((n, c, h, w))
+
+        return image
     
     def async_inference(self, image):
         infer_request_handle = self.exec_network.start_async(request_id=0, inputs={self.input_name: image})
-        
         while True:
             status = self.exec_network.requests[0].wait(-1)
             if status == 0:
-                res = infer_request_handle.outputs[self.output_name]
                 break
             else:
-                time.sleep(1)      
-        
-        return res
+                time.sleep(1)
+            #print("status: ") + str(status)
+        return infer_request_handle
     
-    def draw_outputs(self, coords, image, initial_w, initial_h):
-        
+    def get_output(self, infer_request_handle, request_id, output):
+        if output:
+            res = infer_request_handle.output[output]
+        else:
+            res = self.exec_network.requests[request_id].outputs[self.output_name]
+        return res    
+    
+    def boundingbox(self, res, initial_w, initial_h, frame):
+        current_count = 0
         det = []
- 
-        for obj in coords[0][0]:
+        for obj in res[0][0]:
+            # Draw bounding box for object when it's probability is more than the specified threshold
             if obj[2] > self.threshold:
                 xmin = int(obj[3] * initial_w)
                 ymin = int(obj[4] * initial_h)
                 xmax = int(obj[5] * initial_w)
                 ymax = int(obj[6] * initial_h)
-                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 55, 255),1)
-                
+                cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 55, 255), 1)
+                current_count = current_count + 1
+                #print("Current count: " + str(current_count))
                 det.append(obj)
-    
-        return image, det
-  
-
-    def preprocess_input(self, image):
-        
-        n, c, h, w = self.input_shape
-        
-        image = cv2.resize(image, (w, h))
-        image = image.transpose((2, 0, 1))
-        image = image.reshape((n, c, h, w))
-        
-        return image
+        return frame, det, current_count
 
 def main(args):
     
@@ -159,10 +166,12 @@ def main(args):
                 break
             counter+=1
             
-            coords, image= pd.predict(frame, initial_w, initial_h)
+            coords, image, current_count= pd.predict(frame, initial_w, initial_h)
+            
             num_people= queue.check_coords(coords)
             print(f"Total People in frame = {len(coords)}")
             print(f"Number of people in queue = {num_people}")
+            
             out_text=""
             y_pixel=25
             
