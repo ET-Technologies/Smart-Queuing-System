@@ -1,3 +1,4 @@
+
 import numpy as np
 import time
 from openvino.inference_engine import IENetwork, IECore
@@ -23,12 +24,33 @@ class Queue:
             frame=image[y_min:y_max, x_min:x_max]
             yield frame
     
-    def check_coords(self, coords):
+#    def check_coords(self, coords):
+ #       d={k+1:0 for k in range(len(self.queues))}
+  #      
+   #     for coord in coords:
+    #        for i, q in enumerate(self.queues):
+     #           if coord[0]>q[0] and coord[2]<q[2]:
+      #              d[i+1]+=1
+       # return d
+    
+    def check_coords(self, coords, initial_w, initial_h): 
         d={k+1:0 for k in range(len(self.queues))}
         
+        dummy = ['0', '1' , '2', '3']
+        
         for coord in coords:
+            xmin = int(coord[3] * initial_w)
+            ymin = int(coord[4] * initial_h)
+            xmax = int(coord[5] * initial_w)
+            ymax = int(coord[6] * initial_h)
+            
+            dummy[0] = xmin
+            dummy[1] = ymin
+            dummy[2] = xmax
+            dummy[3] = ymax
+            
             for i, q in enumerate(self.queues):
-                if coord[0]>q[0] and coord[2]<q[2]:
+                if dummy[0]>q[0] and dummy[2]<q[2]:
                     d[i+1]+=1
         return d
 
@@ -45,7 +67,7 @@ class PersonDetect:
 
         try:
             self.model=IENetwork(self.model_structure, self.model_weights)
-            #self.model = core.read_network(self.model_structure, self.model_weights)
+            #self.model = core.read_network(self.model_structure, self.model_weights) # Does not work in this workspace!
         except Exception as e:
             raise ValueError("Could not Initialise the network. Have you enterred the correct model path?")
 
@@ -55,7 +77,7 @@ class PersonDetect:
         self.output_shape=self.model.outputs[self.output_name].shape
 
     def load_model(self):
-      
+        
         self.core = IECore()
         self.exec_network = self.core.load_network(network=self.model, device_name=self.device, num_requests=1)
         
@@ -79,7 +101,6 @@ class PersonDetect:
     def preprocess_input(self, frame):
         # Get the input shape
         n, c, h, w = (self.core, self.input_shape)[1]
-        #print("n-c-h-w " + str(n) + "-" + str(c) + "-" + str(h) + "-" + str(w))
         image = cv2.resize(frame, (w, h))
         image = image.transpose((2, 0, 1))
         image = image.reshape((n, c, h, w))
@@ -94,7 +115,6 @@ class PersonDetect:
                 break
             else:
                 time.sleep(1)
-            #print("status: ") + str(status)
         return infer_request_handle
     
     def get_output(self, infer_request_handle, request_id, output):
@@ -116,7 +136,6 @@ class PersonDetect:
                 ymax = int(obj[6] * initial_h)
                 cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 55, 255), 1)
                 current_count = current_count + 1
-                #print("Current count: " + str(current_count))
                 det.append(obj)
         return frame, det, current_count
 
@@ -168,7 +187,7 @@ def main(args):
             
             coords, image, current_count= pd.predict(frame, initial_w, initial_h)
             
-            num_people= queue.check_coords(coords)
+            num_people = queue.check_coords(coords, initial_w, initial_h)
             print(f"Total People in frame = {len(coords)}")
             print(f"Number of people in queue = {num_people}")
             
